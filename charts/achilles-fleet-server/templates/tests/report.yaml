@@ -1,0 +1,51 @@
+# helm test: POST an empty report with the release's token. The server answers
+# 400 (schema_version 0) only after the token is accepted, so this proves the
+# Service, the token and the handler without writing a device into the inventory.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "afs.fullname" . }}-test-report
+  labels:
+    {{- include "afs.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: report
+      image: {{ .Values.test.image }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 32Mi
+      env:
+        - name: TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "afs.secretName" . }}
+              key: report-token
+        - name: URL
+          value: http://{{ include "afs.fullname" . }}:{{ .Values.service.port }}/v1/reports
+      command:
+        - sh
+        - -c
+        - |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" --data '{}' "$URL")
+          echo "POST {} with the release token: HTTP $code (want 400)"
+          [ "$code" = 400 ]

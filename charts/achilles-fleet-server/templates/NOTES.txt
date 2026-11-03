@@ -1,0 +1,18 @@
+Agents report to:  <base URL>/v1/reports
+{{- if .Values.vdb.enabled }}
+VDB snapshot URL:  <base URL>/v1/vdb
+{{- end }}
+{{- if .Values.ingress.enabled }}
+Base URL: http{{ if .Values.ingress.tls }}s{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+Try it from your machine:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "afs.fullname" . }} 8080:{{ .Values.service.port }}
+{{- end }}
+
+The token to enter in Achilles (Settings > Fleet reporting):
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "afs.secretName" . }} -o jsonpath='{.data.report-token}' | base64 -d
+{{- if .Values.readApi.enabled }}
+
+List devices:
+  curl -H "Authorization: Bearer $(kubectl -n {{ .Release.Namespace }} get secret {{ include "afs.secretName" . }} -o jsonpath='{.data.read-token}' | base64 -d)" <base URL>/v1/devices
+{{- end }}

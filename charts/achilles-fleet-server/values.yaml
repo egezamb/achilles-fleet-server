@@ -1,0 +1,116 @@
+image:
+  repository: ghcr.io/egezamb/achilles-fleet-server
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Bearer tokens. Agents put reportToken in Settings > Fleet reporting.
+tokens:
+  # Use an existing Secret with the keys report-token and, optionally,
+  # vdb-token and read-token. When set, nothing below is used.
+  existingSecret: ""
+  # Left empty, a random token is generated on install and then kept: across
+  # upgrades, and across uninstall and reinstall (the Secret is not deleted),
+  # so enrolled devices never need reconfiguring. Under Argo CD, which renders
+  # without access to the cluster, a generated token changes on every sync:
+  # use existingSecret or set the tokens there.
+  reportToken: ""
+  # Token for GET /v1/vdb. Empty: agents use the report token, which is also
+  # what they fall back to when their own vdb_token is empty.
+  vdbToken: ""
+  # Token for GET /v1/devices. Generated like reportToken when readApi is on.
+  readToken: ""
+
+readApi:
+  enabled: true
+
+# Trusted-host VDB snapshot served at GET /v1/vdb. The file is checked against
+# the rules the agent's matcher applies; a file that fails is never served, and
+# a later broken update keeps the last good copy in service.
+vdb:
+  enabled: false
+  # ConfigMap holding the snapshot (a ConfigMap is limited to 1 MiB). Updating
+  # it is picked up without a restart.
+  configMap:
+    name: ""
+    key: vdb-snapshot.json
+  # A snapshot older than this is withheld (503), so agents drop their cached
+  # copy under their own max-age rule instead of matching stale data.
+  maxAge: 336h
+
+# Largest report accepted, in bytes.
+maxBodyBytes: 8388608
+
+# SQLite on a volume. The server is a single writer, so the Deployment always
+# runs one replica and is replaced with the Recreate strategy.
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  # SQLite in WAL mode needs a local filesystem: no NFS or other RWX storage.
+  accessModes:
+    - ReadWriteOnce
+  # Keep the inventory when the release is uninstalled.
+  keep: true
+  # Use an existing claim instead of creating one.
+  existingClaim: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Only what agents call is exposed by default. GET /v1/devices lists every
+# device and its app versions, a map for an attacker; reach it with
+# kubectl port-forward, or add its path here deliberately.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: fleet.example.com
+      paths:
+        - path: /v1/reports
+          pathType: Exact
+        - path: /v1/vdb
+          pathType: Exact
+  tls: []
+
+networkPolicy:
+  enabled: false
+  # Who may connect. Empty allows every source, which agents on the internet
+  # need when they come in through an ingress controller in another namespace.
+  from: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+test:
+  # Image for helm test; it needs sh and curl.
+  image: curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

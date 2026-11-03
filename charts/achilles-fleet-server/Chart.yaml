@@ -1,0 +1,19 @@
+apiVersion: v2
+name: achilles-fleet-server
+description: Collector and VDB snapshot host for Achilles fleet agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/egezamb/achilles-fleet-server
+sources:
+  - https://github.com/egezamb/achilles-fleet-server
+keywords:
+  - achilles
+  - tauri
+  - electron
+  - vulnerability
+  - fleet
+maintainers:
+  - name: Ege Zambelli
+    url: https://github.com/egezamb

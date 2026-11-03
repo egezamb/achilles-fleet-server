@@ -1,0 +1,130 @@
+{{- if and .Values.vdb.enabled (not .Values.vdb.configMap.name) }}
+{{- fail "vdb.enabled needs vdb.configMap.name" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "afs.fullname" . }}
+  labels:
+    {{- include "afs.labels" . | nindent 4 }}
+spec:
+  # SQLite allows one writer, and the volume is ReadWriteOnce: never two pods.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "afs.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "afs.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Restart when a token given in values changes.
+        checksum/tokens: {{ .Values.tokens | toJson | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: fleet-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: FLEET_LISTEN
+              value: ":8080"
+            - name: FLEET_DB
+              value: /data/fleet.db
+            - name: FLEET_MAX_BODY
+              value: {{ .Values.maxBodyBytes | int64 | quote }}
+            - name: FLEET_REPORT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "afs.secretName" . }}
+                  key: report-token
+            - name: FLEET_VDB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "afs.secretName" . }}
+                  key: vdb-token
+                  optional: true
+            {{- if .Values.readApi.enabled }}
+            - name: FLEET_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "afs.secretName" . }}
+                  key: read-token
+                  # An existingSecret may leave it out; the API then stays off.
+                  optional: true
+            {{- end }}
+            {{- if .Values.vdb.enabled }}
+            - name: FLEET_VDB_FILE
+              value: /vdb/{{ .Values.vdb.configMap.key }}
+            - name: FLEET_VDB_MAX_AGE
+              value: {{ .Values.vdb.maxAge | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.vdb.enabled }}
+            # A directory mount, not subPath, so ConfigMap updates reach the pod.
+            - name: vdb
+              mountPath: /vdb
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "afs.claimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.vdb.enabled }}
+        - name: vdb
+          configMap:
+            name: {{ .Values.vdb.configMap.name }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
