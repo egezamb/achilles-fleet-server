@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "generated_at": 1750598400,
+  "generated_at_iso": "2026-06-22T12:00:00Z",
+  "fleet_id": "acme-corp",
+  "device": {
+    "id": "f1e2d3c4-5678-49ab-cdef-0123456789ab",
+    "hostname": "Janes-MacBook-Pro",
+    "os": "macos",
+    "arch": "aarch64",
+    "app_version": "0.1.0"
+  },
+  "apps": [
+    {
+      "name": "Discord",
+      "bundle_id": "com.hnc.Discord",
+      "bundle_version": "0.0.350",
+      "framework": "electron",
+      "runtimes": {
+        "electron": "37.6.0",
+        "chromium": "138.0.7204.251",
+        "node": "22.9.0"
+      }
+    }
+  ]
+}

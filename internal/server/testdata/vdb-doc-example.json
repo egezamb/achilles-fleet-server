@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "generated_at": 1750598400,
+  "generated_at_iso": "2026-06-22T12:00:00Z",
+  "products": {
+    "chromium": [
+      {
+        "id": "CVE-2026-1234",
+        "source": "nvd",
+        "summary": "Use-after-free in …",
+        "severity": "high",
+        "fixed_in": "139.0.7258.0",
+        "aliases": ["GHSA-xxxx-yyyy-zzzz"],
+        "published": "2026-05-01T00:00:00Z",
+        "references": ["https://example.com/advisory"]
+      }
+    ]
+  }
+}
