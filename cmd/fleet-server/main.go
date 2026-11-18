@@ -11,11 +11,15 @@
 //	FLEET_VDB_FILE      snapshot to serve at GET /v1/vdb (unset: endpoint off)
 //	FLEET_VDB_MAX_AGE   withhold a snapshot older than this (default 336h, the agent's own default)
 //	FLEET_MAX_BODY      largest report accepted, in bytes (default 8388608)
+//
+// "fleet-server build-vdb -o FILE" builds a snapshot from OSV instead of
+// serving, checks it as the server would and replaces FILE only if it passes.
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,13 +29,22 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/egezamb/achilles-fleet-server/internal/osv"
 	"github.com/egezamb/achilles-fleet-server/internal/server"
+	"github.com/egezamb/achilles-fleet-server/internal/snapshot"
 	"github.com/egezamb/achilles-fleet-server/internal/store"
 	"github.com/egezamb/achilles-fleet-server/internal/vdb"
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	if len(os.Args) > 1 && os.Args[1] == "build-vdb" {
+		if err := buildVDB(os.Args[2:]); err != nil {
+			slog.Error("build-vdb failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("fleet-server stopped", "err", err)
 		os.Exit(1)
@@ -105,4 +118,30 @@ func run() error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdown)
+}
+
+// buildVDB writes a snapshot built from OSV. An existing file is replaced only
+// by a snapshot that passes the server's own checks.
+func buildVDB(args []string) error {
+	fs := flag.NewFlagSet("build-vdb", flag.ContinueOnError)
+	out := fs.String("o", os.Getenv("FLEET_VDB_FILE"), "snapshot file to write (default $FLEET_VDB_FILE)")
+	timeout := fs.Duration("timeout", 5*time.Minute, "give up after this long")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *out == "" || fs.NArg() > 0 {
+		return errors.New("usage: fleet-server build-vdb -o FILE (or set FLEET_VDB_FILE)")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	s, err := snapshot.Build(ctx, osv.Client{}.Package, snapshot.Products, time.Now())
+	if err != nil {
+		return err
+	}
+	info, err := snapshot.Write(*out, s)
+	if err != nil {
+		return err
+	}
+	slog.Info("vdb snapshot written", "path", *out, "products", info.Products, "advisories", info.Advisories)
+	return nil
 }
