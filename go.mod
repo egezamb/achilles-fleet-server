@@ -2,7 +2,10 @@ module github.com/egezamb/achilles-fleet-server
 
 go 1.27.2
 
-require modernc.org/sqlite v1.61.1
+require (
+	golang.org/x/mod v0.43.0
+	modernc.org/sqlite v1.61.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
