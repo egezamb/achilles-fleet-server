@@ -21,6 +21,29 @@ As of Achilles `7469522`, the agent's downloader caches any snapshot whose `prod
 
 So the server checks a snapshot against the matcher's rules before serving it. A file that fails is not served; if an update breaks a file that was good, the last good copy keeps being served and the error is logged. A snapshot older than `FLEET_VDB_MAX_AGE` (default 14 days, the agent's own default) is withheld with a 503: the agent only checks a snapshot's age when a download fails, so an old file served with a 200 would stay in use on every device.
 
+## Building a snapshot
+
+```sh
+fleet-server build-vdb -o vdb.json    # or set FLEET_VDB_FILE
+```
+
+It asks OSV for every advisory of the three products Achilles itself looks up in OSV: `electron` (npm), `tauri` (crates.io) and `react_native` (npm). It then checks the snapshot with the same rules the server applies before serving, and replaces the file atomically only if it passes; a failed build leaves the old file in place. On 18 November 2026 it wrote 88 advisories (electron 79, tauri 8, react_native 1), 77 KB, which fits in the chart's ConfigMap.
+
+Three things to know before you serve it:
+
+- **A covered product asks no other source.** The agent uses the snapshot instead of OSV, GHSA and EUVD for these three products. OSV carries GitHub's reviewed advisories for npm and crates.io, but an advisory only EUVD has is not in the snapshot.
+- **`fixed_in` is the highest fix.** The agent reports an advisory for version V when V < `fixed_in`, and the schema has no field for where a range starts. Electron fixes most advisories on several majors at once, so the snapshot takes the highest fix: every affected version is reported, and so are older majors that already got their own fix. A range with no fix makes `fixed_in` null, so the advisory applies to every version.
+- **Severity** maps OSV's `database_specific.severity` as the agent does (MODERATE becomes medium); anything else is null.
+
+With the chart, put the file in the ConfigMap the release reads:
+
+```sh
+fleet-server build-vdb -o vdb.json
+kubectl -n fleet create configmap fleet-vdb --from-file=vdb-snapshot.json=vdb.json --dry-run=client -o yaml | kubectl apply -f -
+helm upgrade fleet oci://ghcr.io/egezamb/charts/achilles-fleet-server -n fleet --reuse-values \
+  --set vdb.enabled=true --set vdb.configMap.name=fleet-vdb    # once
+```
+
 ## Run it
 
 A tag `vX.Y.Z` publishes the image `ghcr.io/egezamb/achilles-fleet-server` (amd64 and arm64) and the chart `oci://ghcr.io/egezamb/charts/achilles-fleet-server`, both signed with keyless cosign. To build it yourself:
@@ -69,7 +92,8 @@ kubectl -n fleet get secret fleet-achilles-fleet-server -o jsonpath='{.data.repo
 
 ## Not yet
 
-- Building snapshots. The server serves a file; producing it from NVD, OSV and EUVD is the next step.
+- Snapshots from NVD and EUVD, for the products Achilles looks up there (chromium, node, deno and the rest). `build-vdb` covers the OSV products only.
+- A CronJob in the chart that rebuilds the snapshot.
 - A web page for the inventory. The read API returns JSON.
 - Postgres, for more than one replica.
 
