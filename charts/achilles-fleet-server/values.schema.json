@@ -56,6 +56,13 @@
         "enabled": {
           "type": "boolean"
         },
+        "source": {
+          "type": "string",
+          "enum": [
+            "configMap",
+            "osv"
+          ]
+        },
         "configMap": {
           "type": "object",
           "properties": {
@@ -71,6 +78,16 @@
         "maxAge": {
           "type": "string",
           "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$|^0$"
+        },
+        "osv": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "every": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+            }
+          }
         }
       }
     },
