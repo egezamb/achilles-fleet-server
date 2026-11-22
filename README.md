@@ -35,7 +35,9 @@ Three things to know before you serve it:
 - **`fixed_in` is the highest fix.** The agent reports an advisory for version V when V < `fixed_in`, and the schema has no field for where a range starts. Electron fixes most advisories on several majors at once, so the snapshot takes the highest fix: every affected version is reported, and so are older majors that already got their own fix. A range with no fix makes `fixed_in` null, so the advisory applies to every version.
 - **Severity** maps OSV's `database_specific.severity` as the agent does (MODERATE becomes medium); anything else is null.
 
-With the chart, put the file in the ConfigMap the release reads:
+The server can also do this itself: set `FLEET_VDB_BUILD_EVERY` (a Go duration such as `24h`) beside `FLEET_VDB_FILE`, and it builds the file at start when there is no fresh one, then at that interval. A failed build keeps the current file and is tried again 15 minutes later. With the chart that is `vdb.source=osv` (below).
+
+Or, with the chart, build the file yourself and put it in the ConfigMap the release reads:
 
 ```sh
 fleet-server build-vdb -o vdb.json
@@ -63,6 +65,7 @@ In Achilles, open **Settings → Fleet reporting**, set the collector URL to `ht
 | `FLEET_READ_TOKEN` | unset: read API off | |
 | `FLEET_VDB_FILE` | unset: `/v1/vdb` off | Re-read when the file changes. |
 | `FLEET_VDB_MAX_AGE` | `336h` | Go duration. `0` serves any age. |
+| `FLEET_VDB_BUILD_EVERY` | unset: never | Build `FLEET_VDB_FILE` from OSV at start and then this often. Keep it below the max age. |
 | `FLEET_DB` | `fleet.db` (`/data/fleet.db` in the image) | SQLite file. |
 | `FLEET_LISTEN` | `:8080` | |
 | `FLEET_MAX_BODY` | `8388608` | Largest report, in bytes. |
@@ -77,23 +80,22 @@ kubectl -n fleet get secret fleet-achilles-fleet-server -o jsonpath='{.data.repo
 - **Tokens** are generated on install unless you set them or point `tokens.existingSecret` at your own Secret. They stay the same across upgrades and across uninstall and reinstall, because a changed token would cut off every enrolled device until someone retypes it on each one. Changing a token inside an existingSecret does not restart the pod; restart it yourself.
 - **GitOps (Argo CD):** Argo CD renders charts with `helm template`, where the chart cannot look up the tokens already in the cluster, so a generated token would change on every sync. Create the Secret yourself and set `tokens.existingSecret`, or set `tokens.reportToken` and `tokens.readToken`. `helm install` and `helm upgrade`, and Flux, which uses them, are not affected.
 - **Storage** is SQLite on a PersistentVolumeClaim, which is kept on uninstall (`persistence.keep`). The Deployment runs one replica with the Recreate strategy, because SQLite has a single writer and the volume is ReadWriteOnce; WAL mode needs a local filesystem, so no NFS. There is no backup: if the volume is lost, the inventory fills up again as devices report, within one reporting interval.
-- **VDB snapshot**: put it in a ConfigMap and set `vdb.enabled=true` and `vdb.configMap.name`. Updates to the ConfigMap are picked up without a restart. A ConfigMap holds at most 1 MiB.
+- **VDB snapshot**: with `vdb.enabled=true` and `vdb.source=osv`, the server builds it from OSV every `vdb.osv.every` (24h) and keeps it on the data volume, so a restart serves the last build at once. The pod then needs HTTPS to `api.osv.dev`. The default, `vdb.source=configMap`, reads a snapshot you put in the ConfigMap named by `vdb.configMap.name`. Updates to the ConfigMap are picked up without a restart. A ConfigMap holds at most 1 MiB.
 - **Ingress** routes only `/v1/reports` and `/v1/vdb`. `/v1/devices` lists every device and its app versions; reach it with `kubectl port-forward`.
-- `networkPolicy.enabled` allows ingress to the HTTP port only and no egress, since the server opens no connections. The `helm test` pod is not covered by it.
+- `networkPolicy.enabled` allows ingress to the HTTP port only. It allows no egress, since the server opens no connections, except with `vdb.source=osv`: then DNS and HTTPS to any address are allowed, because OSV's addresses are not fixed. The `helm test` pod is not covered by it.
 - **Restarts** take the server away for a few seconds, because it runs one pod and the old one stops before the new one starts. An agent whose report fails then sends it again at its next scheduled run, six hours later by default.
 - `helm test` posts an empty report with the release's token and expects the 400 that comes only after the token is accepted, so it writes nothing to the inventory.
 
 ## Tested
 
 - `go test ./...`: the request examples from both Achilles docs, token checks, late, future-dated and replaced reports, clipped fields, concurrent writes, the body limit, and every snapshot rule the agent's matcher applies. The edge cases of those rules (nulls, repeated fields, key case, floats) were checked against serde_json in Achilles' `cve` crate. Seventeen mutants of the server, each removing one rule, are all caught.
-- CI runs the tests with `-race`, `helm lint --strict`, kubeconform for Kubernetes 1.29 and 1.34, and on kind installs the chart with an image built from the commit: `helm test`, an upgrade, and an uninstall and reinstall that must keep the report token.
+- CI runs the tests with `-race`, `helm lint --strict`, kubeconform for Kubernetes 1.29 and 1.34, and on kind installs the chart with an image built from the commit: `helm test`, an upgrade, and an uninstall and reinstall that must keep the report token. It then switches the release to `vdb.source=osv` with the NetworkPolicy on and fetches the snapshot the server built.
 - On kind (Kubernetes 1.37, Helm 4.3): install, `helm test`, upgrade, uninstall and reinstall keep the token and the inventory; a broken ConfigMap update keeps the last good snapshot in service; a stale snapshot gets a 503. Removing the token `lookup` or the `keep` policy from the chart makes the token change on upgrade or reinstall.
 - With [Helmbulance](https://github.com/Git-Hospital/helmbulance): `reinstall` passes. `gitops-render` fails with generated tokens, which is why the GitOps note above exists, and passes with the tokens set in values; `upgrade-without-values` passes the same way. `zero-downtime` fails: 1 or 2 of about 50 requests during a restart (two runs), the single-pod gap described above.
 
 ## Not yet
 
 - Snapshots from NVD and EUVD, for the products Achilles looks up there (chromium, node, deno and the rest). `build-vdb` covers the OSV products only.
-- A CronJob in the chart that rebuilds the snapshot.
 - A web page for the inventory. The read API returns JSON.
 - Postgres, for more than one replica.
 
