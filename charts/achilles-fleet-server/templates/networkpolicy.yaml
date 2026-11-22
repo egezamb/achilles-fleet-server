@@ -19,6 +19,20 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if include "afs.vdbFromOSV" . }}
+  # Building the snapshot needs DNS and HTTPS to api.osv.dev, whose
+  # addresses are not fixed, so HTTPS is allowed to any destination.
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+  {{- else }}
   # The server only answers; it opens no connections of its own.
   egress: []
+  {{- end }}
 {{- end }}
