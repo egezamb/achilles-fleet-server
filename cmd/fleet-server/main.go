@@ -10,6 +10,7 @@
 //	FLEET_READ_TOKEN    bearer token for GET /v1/devices (unset: endpoint off)
 //	FLEET_VDB_FILE      snapshot to serve at GET /v1/vdb (unset: endpoint off)
 //	FLEET_VDB_MAX_AGE   withhold a snapshot older than this (default 336h, the agent's own default)
+//	FLEET_VDB_BUILD_EVERY  build FLEET_VDB_FILE from OSV at start and then this often (unset: never)
 //	FLEET_MAX_BODY      largest report accepted, in bytes (default 8388608)
 //
 // "fleet-server build-vdb -o FILE" builds a snapshot from OSV instead of
@@ -77,16 +78,31 @@ func run() error {
 		return fmt.Errorf("FLEET_VDB_MAX_AGE: %w", err)
 	}
 
+	var buildEvery time.Duration
+	if v := os.Getenv("FLEET_VDB_BUILD_EVERY"); v != "" {
+		buildEvery, err = time.ParseDuration(v)
+		if err != nil || buildEvery <= 0 {
+			return fmt.Errorf("FLEET_VDB_BUILD_EVERY: want a positive Go duration, got %q", v)
+		}
+		if os.Getenv("FLEET_VDB_FILE") == "" {
+			return errors.New("FLEET_VDB_BUILD_EVERY needs FLEET_VDB_FILE, the file to build")
+		}
+		if maxAge > 0 && buildEvery >= maxAge {
+			slog.Warn("FLEET_VDB_BUILD_EVERY is not below FLEET_VDB_MAX_AGE: the snapshot will be withheld as stale between builds",
+				"build_every", buildEvery, "max_age", maxAge)
+		}
+	}
+
 	st, err := store.Open(env("FLEET_DB", "fleet.db"))
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
-	var snapshot *vdb.File
+	var served *vdb.File
 	if path := os.Getenv("FLEET_VDB_FILE"); path != "" {
-		snapshot = vdb.NewFile(path, maxAge)
-		if _, info, err := snapshot.Current(); err != nil {
+		served = vdb.NewFile(path, maxAge)
+		if _, info, err := served.Current(); err != nil {
 			// Not fatal: reports still work, and the file may appear later.
 			slog.Warn("no servable vdb snapshot yet", "path", path, "err", err)
 		} else {
@@ -94,20 +110,24 @@ func run() error {
 		}
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if buildEvery > 0 {
+		go snapshot.Refresh(ctx, os.Getenv("FLEET_VDB_FILE"), buildEvery, buildFromOSV)
+	}
+
 	srv := &http.Server{
 		Addr:              env("FLEET_LISTEN", ":8080"),
-		Handler:           server.New(cfg, st, snapshot).Handler(),
+		Handler:           server.New(cfg, st, served).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	errc := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", srv.Addr, "vdb", snapshot != nil, "read_api", cfg.ReadToken != "")
+		slog.Info("listening", "addr", srv.Addr, "vdb", served != nil, "read_api", cfg.ReadToken != "")
 		errc <- srv.ListenAndServe()
 	}()
 	select {
@@ -134,7 +154,7 @@ func buildVDB(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	s, err := snapshot.Build(ctx, osv.Client{}.Package, snapshot.Products, time.Now())
+	s, err := buildFromOSV(ctx)
 	if err != nil {
 		return err
 	}
@@ -144,4 +164,9 @@ func buildVDB(args []string) error {
 	}
 	slog.Info("vdb snapshot written", "path", *out, "products", info.Products, "advisories", info.Advisories)
 	return nil
+}
+
+// buildFromOSV builds a snapshot of the products Achilles looks up in OSV.
+func buildFromOSV(ctx context.Context) (snapshot.Snapshot, error) {
+	return snapshot.Build(ctx, osv.Client{}.Package, snapshot.Products, time.Now())
 }
