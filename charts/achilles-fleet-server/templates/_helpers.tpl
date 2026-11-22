@@ -38,3 +38,13 @@ app.kubernetes.io/component: server
 {{- define "afs.claimName" -}}
 {{- .Values.persistence.existingClaim | default (printf "%s-data" (include "afs.fullname" .)) }}
 {{- end }}
+
+{{/* True when the server builds the VDB snapshot from OSV itself. */}}
+{{- define "afs.vdbFromOSV" -}}
+{{- if and .Values.vdb.enabled (eq .Values.vdb.source "osv") }}true{{ end }}
+{{- end }}
+
+{{/* True when the snapshot is read from a ConfigMap the user provides. */}}
+{{- define "afs.vdbFromConfigMap" -}}
+{{- if and .Values.vdb.enabled (eq .Values.vdb.source "configMap") }}true{{ end }}
+{{- end }}

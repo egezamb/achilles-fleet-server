@@ -31,11 +31,22 @@ readApi:
 # a later broken update keeps the last good copy in service.
 vdb:
   enabled: false
+  # Where the snapshot comes from:
+  #   configMap  you build it (fleet-server build-vdb) and put it in the
+  #              ConfigMap below.
+  #   osv        the server builds it from OSV itself, at start and then every
+  #              osv.every, and keeps it on the data volume. The pod needs
+  #              HTTPS to api.osv.dev; networkPolicy allows it in this mode.
+  source: configMap
   # ConfigMap holding the snapshot (a ConfigMap is limited to 1 MiB). Updating
-  # it is picked up without a restart.
+  # it is picked up without a restart. Only for source: configMap.
   configMap:
     name: ""
     key: vdb-snapshot.json
+  osv:
+    # Go duration; keep it below maxAge, or the snapshot is withheld as stale
+    # between builds.
+    every: 24h
   # A snapshot older than this is withheld (503), so agents drop their cached
   # copy under their own max-age rule instead of matching stale data.
   maxAge: 336h

@@ -1,5 +1,5 @@
-{{- if and .Values.vdb.enabled (not .Values.vdb.configMap.name) }}
-{{- fail "vdb.enabled needs vdb.configMap.name" }}
+{{- if and (include "afs.vdbFromConfigMap" .) (not .Values.vdb.configMap.name) }}
+{{- fail "vdb.source configMap needs vdb.configMap.name" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -72,9 +72,17 @@ spec:
                   # An existingSecret may leave it out; the API then stays off.
                   optional: true
             {{- end }}
-            {{- if .Values.vdb.enabled }}
+            {{- if include "afs.vdbFromConfigMap" . }}
             - name: FLEET_VDB_FILE
               value: /vdb/{{ .Values.vdb.configMap.key }}
+            {{- else if include "afs.vdbFromOSV" . }}
+            # On the data volume, so a restart serves the last build at once.
+            - name: FLEET_VDB_FILE
+              value: /data/vdb-snapshot.json
+            - name: FLEET_VDB_BUILD_EVERY
+              value: {{ .Values.vdb.osv.every | quote }}
+            {{- end }}
+            {{- if .Values.vdb.enabled }}
             - name: FLEET_VDB_MAX_AGE
               value: {{ .Values.vdb.maxAge | quote }}
             {{- end }}
@@ -95,7 +103,7 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.vdb.enabled }}
+            {{- if include "afs.vdbFromConfigMap" . }}
             # A directory mount, not subPath, so ConfigMap updates reach the pod.
             - name: vdb
               mountPath: /vdb
@@ -111,7 +119,7 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- if .Values.vdb.enabled }}
+        {{- if include "afs.vdbFromConfigMap" . }}
         - name: vdb
           configMap:
             name: {{ .Values.vdb.configMap.name }}
