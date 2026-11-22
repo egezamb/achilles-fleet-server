@@ -54,7 +54,7 @@ jobs:
           tar xzf kubeconform.tgz kubeconform
           # The oldest Kubernetes in kubeVersion and the newest kubeconform has schemas for.
           for k8s in 1.29.0 1.34.0; do
-            for set in "" "networkPolicy.enabled=true,ingress.enabled=true,vdb.enabled=true,vdb.configMap.name=snapshot,persistence.enabled=false"; do
+            for set in "" "networkPolicy.enabled=true,ingress.enabled=true,vdb.enabled=true,vdb.configMap.name=snapshot,persistence.enabled=false" "networkPolicy.enabled=true,vdb.enabled=true,vdb.source=osv"; do
               echo "::group::kubeconform $k8s ${set:-defaults}"
               helm template ci charts/achilles-fleet-server --kube-version "$k8s" ${set:+--set "$set"} \
                 | ./kubeconform -strict -summary -kubernetes-version "$k8s"
@@ -64,7 +64,8 @@ jobs:
 
   # Builds the image from this commit and installs the chart with it on kind:
   # helm test, an upgrade, and an uninstall and reinstall that must keep the
-  # report token, since enrolled devices hold a copy of it.
+  # report token, since enrolled devices hold a copy of it. Then the server
+  # builds the VDB snapshot from OSV and serves it.
   install:
     needs: [go, chart]
     runs-on: ubuntu-24.04
@@ -101,6 +102,24 @@ jobs:
           helm install fleet "${args[@]}"
           test "$(token)" = "$first" || { echo "report token changed on reinstall"; exit 1; }
           helm test fleet -n fleet --logs
+
+      # Through the NetworkPolicy, so this also checks its egress rule.
+      - name: Build the snapshot from OSV
+        run: |
+          set -euo pipefail
+          helm upgrade fleet charts/achilles-fleet-server -n fleet --reuse-values --set vdb.enabled=true --set vdb.source=osv --wait --timeout 3m
+          token=$(kubectl -n fleet get secret fleet-achilles-fleet-server -o jsonpath='{.data.report-token}' | base64 -d)
+          kubectl -n fleet port-forward svc/fleet-achilles-fleet-server 8080:80 >/dev/null &
+          pf=$!
+          trap 'kill "$pf"' EXIT
+          for _ in $(seq 60); do
+            code=$(curl -s -o vdb.json -w '%{http_code}' -H "Authorization: Bearer $token" http://127.0.0.1:8080/v1/vdb || true)
+            [ "$code" = 200 ] && break
+            sleep 5
+          done
+          test "$code" = 200 || { echo "GET /v1/vdb: $code after 5 minutes"; exit 1; }
+          jq -e '.products | has("electron") and has("tauri") and has("react_native")' vdb.json
+          jq -r '.products | to_entries[] | "\(.key): \(.value | length) advisories"' vdb.json
 
       - name: Show the pods on failure
         if: failure()
